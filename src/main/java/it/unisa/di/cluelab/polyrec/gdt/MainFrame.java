@@ -10,12 +10,19 @@ import java.awt.event.WindowEvent;
 import java.awt.event.WindowListener;
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
 
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
+
+import it.unisa.di.cluelab.polyrec.TPoint;
 
 /**
  * @author roberto
@@ -40,7 +47,9 @@ public class MainFrame extends JFrame implements WindowListener {
     private ExtendedPolyRecognizerGSS recognizer;
 
     private JPanel container;
+    private TemplateScreen templateScreen;
     private final Menu menu;
+    private Server server;
 
     public MainFrame() throws IOException {
 
@@ -66,6 +75,7 @@ public class MainFrame extends JFrame implements WindowListener {
     public void setScreen(JPanel panel) {
 
         container = panel;
+        templateScreen = panel instanceof TemplateScreen ? (TemplateScreen) panel : null;
 
         setContentPane(container);
 
@@ -197,4 +207,175 @@ public class MainFrame extends JFrame implements WindowListener {
 
     }
 
+    public void stopServer() {
+        if (server != null) {
+            server.stopped = true;
+            try {
+                if (server.ssc != null) {
+                    server.ssc.close();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            try {
+                if (server.sc != null) {
+                    server.sc.close();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void startServer() {
+        if (server == null || server.stopped) {
+            server = new Server();
+            new Thread(server).start();
+        }
+    }
+
+    /**
+     * WiFi server.
+     */
+    private class Server implements Runnable {
+        static final int SERVER_PORT = 16579;
+        private ServerSocketChannel ssc;
+        private SocketChannel sc;
+        private boolean stopped;
+
+        private void displayWarningMessage(String message) {
+            SwingUtilities.invokeLater(new Runnable() {
+                @Override
+                public void run() {
+                    final TemplateScreen ts = templateScreen;
+                    if (ts != null && !stopped) {
+                        ts.display.set(message, Display.DISPLAY_WARNING);
+                    }
+                }
+            });
+        }
+
+        // CHECKSTYLE:OFF
+        @Override
+        public void run() {
+            try {
+                ssc = ServerSocketChannel.open();
+                ssc.socket().bind(new InetSocketAddress(SERVER_PORT), 1);
+
+                try (SocketChannel channel = ssc.accept()) {
+                    sc = channel;
+                    final ByteBuffer sbf = ByteBuffer.allocate(8);
+                    while (!stopped && sbf.hasRemaining()) {
+                        if (sc.read(sbf) == -1) {
+                            displayWarningMessage("Connection closed.");
+                            return;
+                        }
+                    }
+                    sbf.flip();
+                    final int width = sbf.getInt();
+                    final int height = sbf.getInt();
+                    final TemplateScreen tscreen = templateScreen;
+                    if (tscreen == null) {
+                        return;
+                    }
+                    final double sca = Math.min(tscreen.canvas.getWidth() / (double) width,
+                            tscreen.canvas.getHeight() / (double) height);
+                    final double scale = sca > 0 && sca < java.lang.Double.MAX_VALUE ? sca : 1;
+
+                    final ByteBuffer bf = ByteBuffer.allocate(16);
+                    boolean first = true;
+                    read: for (;;) {
+                        while (bf.hasRemaining()) {
+                            if (stopped || sc.read(bf) == -1) {
+                                break read;
+                            }
+                        }
+                        if (stopped) {
+                            break read;
+                        }
+                        bf.flip();
+                        final float x = bf.getFloat();
+                        final float y = bf.getFloat();
+                        final long t = bf.getLong();
+                        bf.clear();
+                        if (TemplateScreen.getDrawMode() != TemplateScreen.SMARTPHONE_WIFI) {
+                            continue;
+                        }
+                        System.out.println("Received: x=" + x + " y=" + y + " t=" + t);
+                        if (t == -1) {
+                            first = false;
+                            SwingUtilities.invokeLater(new Runnable() {
+                                @Override
+                                public void run() {
+                                    final TemplateScreen ts = templateScreen;
+                                    if (ts != null) {
+                                        ts.strokeCompleted();
+                                    }
+                                }
+                            });
+                        } else if (t == -2) {
+                            SwingUtilities.invokeLater(new Runnable() {
+                                @Override
+                                public void run() {
+                                    final TemplateScreen ts = templateScreen;
+                                    if (ts != null) {
+                                        ts.clearCanvas();
+                                    }
+                                }
+                            });
+                        } else if (t == -3) {
+                            // NOP
+                        } else if (t == -4) {
+                            break read;
+                        } else {
+                            final boolean startStroke = first;
+                            if (first) {
+                                first = false;
+                            }
+                            SwingUtilities.invokeLater(new Runnable() {
+                                @Override
+                                public void run() {
+                                    final TemplateScreen ts = templateScreen;
+                                    if (ts != null) {
+                                        if (startStroke) {
+                                            ts.startStroke();
+                                        }
+                                        ts.getCurrentGesture().addPoint(new TPoint(x * scale, y * scale, t));
+                                        ts.setState(TemplateScreen.STROKE_IN_PROGRESS);
+                                        ts.setMode(TemplateScreen.CURRENT);
+                                        repaint();
+                                        ts.repaintCanvas();
+                                    }
+                                }
+                            });
+                        }
+                    }
+
+                }
+            } catch (IOException e) {
+                String m = e.getMessage();
+                if (m == null) {
+                    m = e.toString();
+                }
+                displayWarningMessage(m);
+            } finally {
+                try {
+                    if (ssc != null) {
+                        ssc.close();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                try {
+                    if (sc != null) {
+                        sc.close();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                stopped = true;
+            }
+        }
+        // CHECKSTYLE:ON
+    }
 }

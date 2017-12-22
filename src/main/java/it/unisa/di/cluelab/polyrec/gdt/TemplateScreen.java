@@ -15,7 +15,12 @@ import java.awt.event.MouseMotionListener;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashMap;
 
 import javax.bluetooth.BluetoothStateException;
@@ -72,11 +77,15 @@ public class TemplateScreen extends JPanel
 
     // draw mode values
     public static final int MOUSE = 0;
-    public static final int SMARTPHONE = 1;
+    public static final int SMARTPHONE_BT = 1;
+    public static final int SMARTPHONE_WIFI = 2;
 
     private static int drawMode;
     private static WaitThread waitThread;
 
+    private static final String DRAW_WIFI = "<html><font color='white'>Draw With Smartphone - WiFi</font></html>";
+    private static final String DRAW_WIFI_RESTART = "<html><font color='white'>Draw With Smartphone - WiFi "
+            + "(<b>restart server</b>)</font></html>";
     private static final long serialVersionUID = 2059513571482634664L;
 
     protected Display display;
@@ -101,6 +110,7 @@ public class TemplateScreen extends JPanel
     // draw gesture
     protected JButton drawGesture = new JButton();
     protected JButton drawGestureBluetooth = new JButton();
+    protected JButton drawGestureWifi = new JButton();
 
     protected JButton clearCanvas = new JButton("Clear Canvas");
     protected JCheckBox rotInv = new JCheckBox();
@@ -272,17 +282,27 @@ public class TemplateScreen extends JPanel
         rotInv.addItemListener(templateScreenListener);
         saveGesture.addActionListener(templateScreenListener);
 
-        // draw with smartphone
+        // draw with smartphone Bluetooth
 
         drawGestureBluetooth.addActionListener(templateScreenListener);
 
         drawGestureBluetooth.setOpaque(false);
-        drawGestureBluetooth.setText("<html><font color='white'>Draw With Smartphone</font></html>");
+        drawGestureBluetooth.setText("<html><font color='white'>Draw With Smartphone - Bluetooth</font></html>");
         drawGestureBluetooth.setToolTipText("Activate BT Server to Draw With Smartphone");
         drawGestureBluetooth.setContentAreaFilled(false);
         drawGestureBluetooth.setBorderPainted(false);
         drawGestureBluetooth.setCursor(new Cursor(Cursor.HAND_CURSOR));
         drawGestureBluetooth.setFont(fontButtons);
+
+        // draw with smartphone WiFi
+        drawGestureWifi.addActionListener(templateScreenListener);
+        drawGestureWifi.setOpaque(false);
+        drawGestureWifi.setText(DRAW_WIFI);
+        drawGestureWifi.setToolTipText("Activate TCP Server to Draw With Smartphone");
+        drawGestureWifi.setContentAreaFilled(false);
+        drawGestureWifi.setBorderPainted(false);
+        drawGestureWifi.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        drawGestureWifi.setFont(fontButtons);
 
         // draw with mouse
         drawGesture.setText("<html><font color='white'>Draw With Mouse</font></html>");
@@ -655,7 +675,7 @@ public class TemplateScreen extends JPanel
         if (r != null) {
             showScoreTable(r);
         }
-
+        controlTools.repaint();
     }
 
     // tabella score e distanze
@@ -994,7 +1014,6 @@ public class TemplateScreen extends JPanel
     @SuppressWarnings({"checkstyle:cyclomaticcomplexity", "checkstyle:executablestatementcount", "checkstyle:javancss",
         "checkstyle:npathcomplexity"})
     public void drawTemplate(int mode, int drawmode, boolean thumbnails) {
-
         this.mode = mode;
         drawMode = drawmode;
         if (this.mode == CURRENT && !this.testing) {
@@ -1013,9 +1032,54 @@ public class TemplateScreen extends JPanel
 
         clearCanvas();
 
-        if (drawMode == SMARTPHONE) {
-
+        if (drawMode == SMARTPHONE_WIFI) {
+            final String prevButtonText = drawGestureWifi.getText();
+            drawGestureWifi.setText(DRAW_WIFI_RESTART);
             try {
+                drawGestureWifi
+                        .setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/smartphone-green.png"))));
+                drawGestureBluetooth
+                        .setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/smartphone.png"))));
+
+                drawGesture.setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/mouse.png"))));
+            } catch (final IOException e) {
+                e.printStackTrace();
+            }
+
+            final StringBuilder addresses = new StringBuilder();
+            try {
+                final Enumeration<NetworkInterface> e = NetworkInterface.getNetworkInterfaces();
+                while (e.hasMoreElements()) {
+                    final NetworkInterface n = e.nextElement();
+                    final Enumeration<InetAddress> ee = n.getInetAddresses();
+                    while (ee.hasMoreElements()) {
+                        final InetAddress i = ee.nextElement();
+                        if (i instanceof Inet4Address && !i.isLoopbackAddress()) {
+                            addresses.append(i.getHostAddress() + ", ");
+                        }
+                    }
+                }
+                if (addresses.length() == 0) {
+                    display.set("Network error: no connection available.", 0);
+                } else {
+                    addresses.setLength(addresses.length() - 2);
+                    display.set("Connect App to " + addresses, 0);
+                    if (DRAW_WIFI_RESTART.equals(prevButtonText)) {
+                        mainClass.stopServer();
+                    }
+                    mainClass.startServer();
+                }
+            } catch (SocketException e) {
+                String m = e.getMessage();
+                if (m == null) {
+                    m = e.toString();
+                }
+                display.set("Network error: " + m, 0);
+            }
+        } else if (drawMode == SMARTPHONE_BT) {
+            drawGestureWifi.setText(DRAW_WIFI);
+            try {
+                drawGestureWifi.setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/smartphone.png"))));
                 drawGestureBluetooth
                         .setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/smartphone-green.png"))));
 
@@ -1032,7 +1096,6 @@ public class TemplateScreen extends JPanel
                         display.set("Device Connected " + waitThread.getDev().getFriendlyName(false)
                                 + " - Use 'Blueotooth Gestures' App to draw gesture", 0);
                     } catch (final IOException e) {
-
                         e.printStackTrace();
                     }
                 } else {
@@ -1063,10 +1126,12 @@ public class TemplateScreen extends JPanel
             }
 
         } else if (drawMode == MOUSE) {
+            drawGestureWifi.setText(DRAW_WIFI);
             if (waitThread != null) {
                 waitThread.setDraw(false);
             }
             try {
+                drawGestureWifi.setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/smartphone.png"))));
                 drawGesture.setIcon(new ImageIcon(ImageIO.read(getClass().getResource("/img/mouse-green.png"))));
 
                 drawGestureBluetooth
@@ -1084,6 +1149,7 @@ public class TemplateScreen extends JPanel
 
         commands.add(drawGesture);
         commands.add(drawGestureBluetooth);
+        commands.add(drawGestureWifi);
 
         rotInv.setVisible(false);
         saveGesture.setVisible(false);
@@ -1091,7 +1157,6 @@ public class TemplateScreen extends JPanel
         controlTools.add(saveGesture);
 
         if (!this.testing && thumbnails) {
-
             main.add(createThumbsPanel(className, false), BorderLayout.WEST);
             main.repaint();
             repaint();

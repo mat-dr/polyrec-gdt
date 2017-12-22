@@ -67,7 +67,12 @@ public class TemplateScreenListener implements ActionListener, ItemListener {
             return;
         }
         if (e.getSource() == templateScreen.drawGestureBluetooth) {
-            templateScreen.drawTemplate(templateScreen.mode, TemplateScreen.SMARTPHONE, false);
+            templateScreen.drawTemplate(templateScreen.mode, TemplateScreen.SMARTPHONE_BT, false);
+
+            return;
+        }
+        if (e.getSource() == templateScreen.drawGestureWifi) {
+            templateScreen.drawTemplate(templateScreen.mode, TemplateScreen.SMARTPHONE_WIFI, false);
 
             return;
         }
